@@ -16,7 +16,7 @@ import (
 
 const (
 	// Collection configuration
-	MessageCollectionName = "messages"
+	MessageCollectionName = "messages_test"
 	MessageDimension      = 768 // Standard embedding dimension
 	IndexType             = entity.IvfFlat
 	MetricType            = entity.L2
@@ -52,20 +52,21 @@ func (s *MessageStore) initializeCollection(ctx context.Context) error {
 
 	// Define schema for messages collection
 	schema := entity.NewSchema()
-	schema.WithField(entity.NewField().WithName("id").WithDataType(entity.FieldTypeVarChar).WithIsPrimaryKey(true)).
-		WithField(entity.NewField().WithName("user_id").WithDataType(entity.FieldTypeVarChar)).
-		WithField(entity.NewField().WithName("conversation_id").WithDataType(entity.FieldTypeVarChar)).
-		WithField(entity.NewField().WithName("language").WithDataType(entity.FieldTypeVarChar)).
-		WithField(entity.NewField().WithName("ai_message").WithDataType(entity.FieldTypeVarChar)).
-		WithField(entity.NewField().WithName("ai_response").WithDataType(entity.FieldTypeVarChar)).
-		WithField(entity.NewField().WithName("message").WithDataType(entity.FieldTypeVarChar)).
-		WithField(entity.NewField().WithName("message_embedding").WithDataType(entity.FieldTypeFloatVector)).
-		WithField(entity.NewField().WithName("respone").WithDataType(entity.FieldTypeVarChar)).
+	schema.CollectionName = MessageCollectionName
+	schema.WithField(entity.NewField().WithName("id").WithDataType(entity.FieldTypeVarChar).WithIsPrimaryKey(true).WithMaxLength(500)).
+		WithField(entity.NewField().WithName("user_id").WithDataType(entity.FieldTypeVarChar).WithMaxLength(500)).
+		WithField(entity.NewField().WithName("conversation_id").WithDataType(entity.FieldTypeVarChar).WithMaxLength(500)).
+		WithField(entity.NewField().WithName("language").WithDataType(entity.FieldTypeVarChar).WithMaxLength(500)).
+		WithField(entity.NewField().WithName("ai_message").WithDataType(entity.FieldTypeVarChar).WithMaxLength(500)).
+		WithField(entity.NewField().WithName("ai_response").WithDataType(entity.FieldTypeVarChar).WithMaxLength(500)).
+		WithField(entity.NewField().WithName("message").WithDataType(entity.FieldTypeVarChar).WithMaxLength(500)).
+		WithField(entity.NewField().WithName("message_embedding").WithDataType(entity.FieldTypeFloatVector).WithDim(MessageDimension)).
+		WithField(entity.NewField().WithName("respone").WithDataType(entity.FieldTypeVarChar).WithMaxLength(500)).
 		WithField(entity.NewField().WithName("response_index").WithDataType(entity.FieldTypeInt64)).
-		WithField(entity.NewField().WithName("response_embedding").WithDataType(entity.FieldTypeFloatVector)).
-		WithField(entity.NewField().WithName("feedback").WithDataType(entity.FieldTypeVarChar)).
+		WithField(entity.NewField().WithName("response_embedding").WithDataType(entity.FieldTypeFloatVector).WithDim(MessageDimension)).
+		WithField(entity.NewField().WithName("feedback").WithDataType(entity.FieldTypeVarChar).WithMaxLength(500)).
 		WithField(entity.NewField().WithName("metadata").WithDataType(entity.FieldTypeJSON)).
-		WithField(entity.NewField().WithName("status").WithDataType(entity.FieldTypeVarChar)).
+		WithField(entity.NewField().WithName("status").WithDataType(entity.FieldTypeVarChar).WithMaxLength(500)).
 		WithField(entity.NewField().WithName("created_at").WithDataType(entity.FieldTypeInt64)).
 		WithField(entity.NewField().WithName("updated_at").WithDataType(entity.FieldTypeInt64)).
 		WithField(entity.NewField().WithName("deleted_at").WithDataType(entity.FieldTypeInt64))
@@ -76,7 +77,7 @@ func (s *MessageStore) initializeCollection(ctx context.Context) error {
 		return fmt.Errorf("failed to create collection: %w", err)
 	}
 
-	// Create index for vector fields
+	// Create index for scalar and vector fields
 	idxScalar := entity.NewScalarIndexWithType(entity.Sorted)
 	s.client.CreateIndex(ctx, MessageCollectionName, "id", idxScalar, false)
 	s.client.CreateIndex(ctx, MessageCollectionName, "user_id", idxScalar, false)
@@ -84,7 +85,7 @@ func (s *MessageStore) initializeCollection(ctx context.Context) error {
 	s.client.CreateIndex(ctx, MessageCollectionName, "message", idxScalar, false)
 	s.client.CreateIndex(ctx, MessageCollectionName, "response", idxScalar, false)
 
-	idxVector, err := entity.NewIndexIvfFlat(entity.IP, 1024)
+	idxVector, err := entity.NewIndexIvfFlat(entity.COSINE, 1024)
 	if err != nil {
 		log.Fatal("failed to new index:", err.Error())
 	}
@@ -514,38 +515,5 @@ func main() {
 	}
 	defer milvusClient.Close()
 
-	// For demonstration, we'll show the API usage
-	fmt.Println("\n1. Creating MessageStore...")
-	store := NewMessageStore(milvusClient)
-
-	// Create sample data for testing
-	conversationID := uuid.New()
-	fmt.Printf("Using conversation ID: %s\n", conversationID.String())
-
-	// Example of how to call GetByConversationID function:
-	fmt.Println("\n2. Calling GetByConversationID function...")
-
-	// Uncomment these lines when you have a real Milvus client:
-	messages, err := store.GetByConversationID(ctx, conversationID, 10, 0)
-	if err != nil {
-		fmt.Printf("GetByConversationID error: %v\n", err)
-	} else {
-		fmt.Printf("Found %d messages in conversation\n", len(messages))
-		for i, msg := range messages {
-			fmt.Printf("Message %d: ID=%s, Content=%s\n", i+1, msg.ID.String(), msg.Message)
-		}
-	}
-
-	// Parameters explanation:
-	fmt.Println("\nGetByConversationID function parameters:")
-	fmt.Println("- ctx: context.Context - for cancellation and timeouts")
-	fmt.Println("- conversationID: uuid.UUID - the conversation to get messages from")
-	fmt.Println("- limit: int - maximum number of messages to return (e.g., 10)")
-	fmt.Println("- offset: int - number of messages to skip for pagination (e.g., 0)")
-
-	fmt.Println("\n=== Example completed ===")
-	fmt.Println("\nTo test with real data:")
-	fmt.Println("1. Start Milvus server: docker run -d --name milvus -p 19530:19530 milvusdb/milvus:latest")
-	fmt.Println("2. Uncomment the client connection and function call code")
-	fmt.Println("3. Run: go run chatbot.go")
+	NewMessageStore(milvusClient)
 }
