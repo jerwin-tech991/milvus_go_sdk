@@ -61,7 +61,7 @@ func (s *MessageStore) initializeCollection(ctx context.Context) error {
 		WithField(entity.NewField().WithName("ai_response").WithDataType(entity.FieldTypeVarChar).WithMaxLength(500)).
 		WithField(entity.NewField().WithName("message").WithDataType(entity.FieldTypeVarChar).WithMaxLength(500)).
 		WithField(entity.NewField().WithName("message_embedding").WithDataType(entity.FieldTypeFloatVector).WithDim(MessageDimension)).
-		WithField(entity.NewField().WithName("respone").WithDataType(entity.FieldTypeVarChar).WithMaxLength(500)).
+		WithField(entity.NewField().WithName("response").WithDataType(entity.FieldTypeVarChar).WithMaxLength(500)).
 		WithField(entity.NewField().WithName("response_index").WithDataType(entity.FieldTypeInt64)).
 		WithField(entity.NewField().WithName("response_embedding").WithDataType(entity.FieldTypeFloatVector).WithDim(MessageDimension)).
 		WithField(entity.NewField().WithName("feedback").WithDataType(entity.FieldTypeVarChar).WithMaxLength(500)).
@@ -78,16 +78,17 @@ func (s *MessageStore) initializeCollection(ctx context.Context) error {
 	}
 
 	// Create index for scalar and vector fields
-	idxScalar := entity.NewScalarIndexWithType(entity.Sorted)
+	idxScalar, err := entity.NewIndexAUTOINDEX(entity.MetricType(entity.AUTOINDEX))
+	if err != nil {
+		log.Fatal("failed to new scalar index:", err.Error())
+	}
 	s.client.CreateIndex(ctx, MessageCollectionName, "id", idxScalar, false)
-	s.client.CreateIndex(ctx, MessageCollectionName, "user_id", idxScalar, false)
-	s.client.CreateIndex(ctx, MessageCollectionName, "conversation_id", idxScalar, false)
 	s.client.CreateIndex(ctx, MessageCollectionName, "message", idxScalar, false)
 	s.client.CreateIndex(ctx, MessageCollectionName, "response", idxScalar, false)
 
-	idxVector, err := entity.NewIndexIvfFlat(entity.COSINE, 1024)
+	idxVector, err := entity.NewIndexAUTOINDEX(entity.COSINE)
 	if err != nil {
-		log.Fatal("failed to new index:", err.Error())
+		log.Fatal("failed to new vector index:", err.Error())
 	}
 	s.client.CreateIndex(ctx, MessageCollectionName, "message_embedding", idxVector, false)
 	s.client.CreateIndex(ctx, MessageCollectionName, "response_embedding", idxVector, false)
@@ -105,6 +106,8 @@ func (s *MessageStore) Create(ctx context.Context, message *models.Message) erro
 	// Prepare data for insertion
 	ids := []string{message.ID.String()}
 	conversationIDs := []string{message.ConversationID.String()}
+	aiMessages := []string{message.AIMessage}
+	aiResponses := []string{message.AIResponse}
 	messages := []string{message.Message}
 	responses := []string{message.Response}
 	statuses := []string{string(message.Status)}
@@ -148,6 +151,8 @@ func (s *MessageStore) Create(ctx context.Context, message *models.Message) erro
 	columns := []entity.Column{
 		entity.NewColumnVarChar("id", ids),
 		entity.NewColumnVarChar("conversation_id", conversationIDs),
+		entity.NewColumnVarChar("ai_message", aiMessages),
+		entity.NewColumnVarChar("ai_response", aiResponses),
 		entity.NewColumnVarChar("message", messages),
 		entity.NewColumnVarChar("response", responses),
 		entity.NewColumnFloatVector("message_embedding", MessageDimension, messageEmbeddings),
@@ -273,7 +278,7 @@ func (s *MessageStore) SearchSimilarMessages(ctx context.Context, queryEmbedding
 	}
 
 	// Convert search results to messages
-	return s.parseSearchResults(searchResult[0])
+	return s.parseSearchResults(searchResult)
 }
 
 func (s *MessageStore) Update(ctx context.Context, message *models.Message) error {
@@ -386,61 +391,62 @@ func (s *MessageStore) parseQueryResults(results []entity.Column) ([]models.Mess
 	return messages, nil
 }
 
-func (s *MessageStore) parseSearchResults(result client.SearchResult) ([]models.Message, error) {
-	messages := make([]models.Message, result.IDs.Len())
+func (s *MessageStore) parseSearchResults(result []client.SearchResult) ([]models.Message, error) {
+	messages := make([]models.Message, len(result))
 
-	// for i, id := range result.IDs {
-	// 	message := models.Message{}
+	for i, r := range result {
+		message := models.Message{}
 
-	// 	// Parse ID
-	// 	if idStr, ok := id.(string); ok {
-	// 		messageID, err := uuid.Parse(idStr)
-	// 		if err != nil {
-	// 			return nil, fmt.Errorf("failed to parse message ID: %w", err)
-	// 		}
-	// 		message.ID = messageID
-	// 	}
+		fmt.Println(r)
+		// Parse ID
+		// if idStr, ok := rid.(string); ok {
+		// 	messageID, err := uuid.Parse(idStr)
+		// 	if err != nil {
+		// 		return nil, fmt.Errorf("failed to parse message ID: %w", err)
+		// 	}
+		// 	message.ID = messageID
+		// }
 
-	// 	// Parse fields from search result
-	// 	for fieldName, fieldData := range result.Fields {
-	// 		switch fieldName {
-	// 		case "conversation_id":
-	// 			if convIDs, ok := fieldData.([]string); ok && i < len(convIDs) {
-	// 				convID, err := uuid.Parse(convIDs[i])
-	// 				if err != nil {
-	// 					return nil, fmt.Errorf("failed to parse conversation ID: %w", err)
-	// 				}
-	// 				message.ConversationID = convID
-	// 			}
-	// 		case "message":
-	// 			if messages, ok := fieldData.([]string); ok && i < len(messages) {
-	// 				message.Message = messages[i]
-	// 			}
-	// 		case "response":
-	// 			if responses, ok := fieldData.([]string); ok && i < len(responses) {
-	// 				message.Response = responses[i]
-	// 			}
-	// 		case "status":
-	// 			if statuses, ok := fieldData.([]string); ok && i < len(statuses) {
-	// 				message.Status = models.MessageStatus(statuses[i])
-	// 			}
-	// 		case "feedback":
-	// 			if feedbacks, ok := fieldData.([]string); ok && i < len(feedbacks) {
-	// 				message.Feedback = models.UserFeedback(feedbacks[i])
-	// 			}
-	// 		case "created_at":
-	// 			if timestamps, ok := fieldData.([]int64); ok && i < len(timestamps) {
-	// 				message.CreatedAt = time.Unix(timestamps[i], 0)
-	// 			}
-	// 		case "updated_at":
-	// 			if timestamps, ok := fieldData.([]int64); ok && i < len(timestamps) {
-	// 				message.UpdatedAt = time.Unix(timestamps[i], 0)
-	// 			}
-	// 		}
-	// 	}
+		// 	// Parse fields from search result
+		// 	for fieldName, fieldData := range result.Fields {
+		// 		switch fieldName {
+		// 		case "conversation_id":
+		// 			if convIDs, ok := fieldData.([]string); ok && i < len(convIDs) {
+		// 				convID, err := uuid.Parse(convIDs[i])
+		// 				if err != nil {
+		// 					return nil, fmt.Errorf("failed to parse conversation ID: %w", err)
+		// 				}
+		// 				message.ConversationID = convID
+		// 			}
+		// 		case "message":
+		// 			if messages, ok := fieldData.([]string); ok && i < len(messages) {
+		// 				message.Message = messages[i]
+		// 			}
+		// 		case "response":
+		// 			if responses, ok := fieldData.([]string); ok && i < len(responses) {
+		// 				message.Response = responses[i]
+		// 			}
+		// 		case "status":
+		// 			if statuses, ok := fieldData.([]string); ok && i < len(statuses) {
+		// 				message.Status = models.MessageStatus(statuses[i])
+		// 			}
+		// 		case "feedback":
+		// 			if feedbacks, ok := fieldData.([]string); ok && i < len(feedbacks) {
+		// 				message.Feedback = models.UserFeedback(feedbacks[i])
+		// 			}
+		// 		case "created_at":
+		// 			if timestamps, ok := fieldData.([]int64); ok && i < len(timestamps) {
+		// 				message.CreatedAt = time.Unix(timestamps[i], 0)
+		// 			}
+		// 		case "updated_at":
+		// 			if timestamps, ok := fieldData.([]int64); ok && i < len(timestamps) {
+		// 				message.UpdatedAt = time.Unix(timestamps[i], 0)
+		// 			}
+		// 		}
+		// 	}
 
-	// 	messages[i] = message
-	// }
+		messages[i] = message
+	}
 
 	return messages, nil
 }
@@ -516,4 +522,5 @@ func main() {
 	defer milvusClient.Close()
 
 	NewMessageStore(milvusClient)
+
 }
